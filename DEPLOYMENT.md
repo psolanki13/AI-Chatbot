@@ -24,12 +24,17 @@ This guide will help you deploy your AI Chatbot with Clerk authentication to pro
 3. Connect your GitHub account and select repository: `psolanki13/AI-Chatbot`
 4. Configure the service:
    - **Name**: `ai-chatbot-backend`
-   - **Environment**: `Node`
+   - **Environment**: `Node` (IMPORTANT: Don't use Auto-detect)
    - **Region**: Choose closest to your location
    - **Branch**: `master`
-   - **Root Directory**: `backend`
-   - **Build Command**: `npm install`
-   - **Start Command**: `npm start`
+   
+   **For Root Directory - Try in this order:**
+   - **Option A**: Root Directory: `backend`
+   - **Option B**: If Option A fails, use:
+     - Root Directory: (leave blank)
+     - Build Command: `cd backend && npm install`
+     - Start Command: `cd backend && npm start`
+   - **Option C**: Root Directory: `./backend`
 
 ### Step 2: Add Environment Variables in Render
 In the **Environment** tab, add these variables:
