@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, RefreshCw, Settings, MoreVertical, Trash2 } from 'lucide-react';
+import { Bot, RefreshCw, Settings, MoreVertical, Trash2, History } from 'lucide-react';
 import Message from './Message';
 import ChatInput from './ChatInput';
 import TypingIndicator from './TypingIndicator';
@@ -17,6 +17,9 @@ const ChatBot = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isConnected, setIsConnected] = useState(true);
+  const [sessionId, setSessionId] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef(null);
 
   // Auto-scroll to bottom when new messages are added
@@ -32,15 +35,26 @@ const ChatBot = () => {
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        await chatAPI.healthCheck();
-        setIsConnected(true);
+        const health = await chatAPI.healthCheck();
+        setIsConnected(health.database?.connected || false);
+        console.log('Backend status:', health);
       } catch (error) {
         setIsConnected(false);
         console.error('Backend connection failed:', error);
       }
     };
 
+    const loadConversations = async () => {
+      try {
+        const response = await chatAPI.getConversations();
+        setConversations(response.conversations || []);
+      } catch (error) {
+        console.error('Failed to load conversations:', error);
+      }
+    };
+
     checkConnection();
+    loadConversations();
   }, []);
 
   const handleSendMessage = async (messageText) => {
@@ -59,14 +73,13 @@ const ChatBot = () => {
     setError(null);
 
     try {
-      // Prepare conversation history for context
-      const conversationHistory = messages.map(msg => ({
-        role: msg.isUser ? 'user' : 'assistant',
-        content: msg.content
-      }));
+      // Send message to backend with session ID
+      const response = await chatAPI.sendMessage(messageText, sessionId);
 
-      // Send message to backend
-      const response = await chatAPI.sendMessage(messageText, conversationHistory);
+      // Update session ID if this is a new conversation
+      if (!sessionId && response.sessionId) {
+        setSessionId(response.sessionId);
+      }
 
       // Add AI response
       const aiMessage = {
@@ -105,7 +118,52 @@ const ChatBot = () => {
         timestamp: new Date().toISOString(),
       }
     ]);
+    setSessionId(null); // Reset session
     setError(null);
+  };
+
+  const handleLoadConversation = async (convSessionId) => {
+    try {
+      setIsLoading(true);
+      const response = await chatAPI.getConversation(convSessionId);
+      
+      if (response.success && response.conversation) {
+        const conv = response.conversation;
+        const formattedMessages = conv.messages.map((msg, index) => ({
+          id: index + 1,
+          content: msg.content,
+          isUser: msg.role === 'user',
+          timestamp: msg.timestamp,
+        }));
+
+        setMessages(formattedMessages);
+        setSessionId(conv.sessionId);
+        setShowHistory(false);
+      }
+    } catch (error) {
+      console.error('Error loading conversation:', error);
+      setError('Failed to load conversation');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteConversation = async (convSessionId) => {
+    try {
+      await chatAPI.deleteConversation(convSessionId);
+      
+      // Refresh conversations list
+      const response = await chatAPI.getConversations();
+      setConversations(response.conversations || []);
+      
+      // If we deleted the current conversation, start fresh
+      if (convSessionId === sessionId) {
+        handleClearChat();
+      }
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+      setError('Failed to delete conversation');
+    }
   };
 
   const handleRetry = () => {
@@ -135,6 +193,13 @@ const ChatBot = () => {
         {/* Header Actions */}
         <div className="flex items-center space-x-2">
           <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+            title="Conversation history"
+          >
+            <History size={18} />
+          </button>
+          <button
             onClick={handleRetry}
             className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
             title="Refresh connection"
@@ -156,6 +221,65 @@ const ChatBot = () => {
           </button>
         </div>
       </div>
+
+      {/* History Sidebar */}
+      {showHistory && (
+        <div className="absolute top-0 left-0 w-80 h-full bg-white border-r border-gray-200 shadow-lg z-10">
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Conversations</h3>
+              <button
+                onClick={() => setShowHistory(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          
+          <div className="overflow-y-auto h-full pb-20">
+            {conversations.length === 0 ? (
+              <div className="p-4 text-center text-gray-500">
+                No conversations yet
+              </div>
+            ) : (
+              conversations.map((conv) => (
+                <div
+                  key={conv.sessionId}
+                  className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${
+                    conv.sessionId === sessionId ? 'bg-blue-50 border-blue-200' : ''
+                  }`}
+                  onClick={() => handleLoadConversation(conv.sessionId)}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-medium text-gray-900 truncate">
+                        {conv.title}
+                      </h4>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {conv.messageCount} messages
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {new Date(conv.updatedAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteConversation(conv.sessionId);
+                      }}
+                      className="p-1 text-gray-400 hover:text-red-600 rounded"
+                      title="Delete conversation"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Connection Error Banner */}
       {!isConnected && (

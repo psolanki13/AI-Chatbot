@@ -4,6 +4,11 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { v4: uuidv4 } = require('uuid');
+
+// Database connection
+const database = require('./config/database');
+const { Conversation, Analytics } = require('./models');
 
 // Load environment variables
 dotenv.config();
@@ -44,7 +49,11 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'AI Chatbot Backend is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    database: {
+      status: database.getStatus(),
+      connected: database.isConnected()
+    }
   });
 });
 
@@ -74,10 +83,106 @@ app.get('/api/test-api', async (req, res) => {
   }
 });
 
+// Get all conversations
+app.get('/api/conversations', async (req, res) => {
+  try {
+    const conversations = await Conversation.find({ isActive: true })
+      .select('sessionId title createdAt updatedAt messages')
+      .sort({ updatedAt: -1 })
+      .limit(50);
+
+    const conversationsWithStats = conversations.map(conv => ({
+      sessionId: conv.sessionId,
+      title: conv.title,
+      messageCount: conv.messages.length,
+      createdAt: conv.createdAt,
+      updatedAt: conv.updatedAt,
+      lastMessage: conv.messages.length > 0 ? conv.messages[conv.messages.length - 1] : null
+    }));
+
+    res.json({
+      success: true,
+      conversations: conversationsWithStats,
+      total: conversations.length
+    });
+  } catch (error) {
+    console.error('Error fetching conversations:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch conversations'
+    });
+  }
+});
+
+// Get specific conversation
+app.get('/api/conversations/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const conversation = await Conversation.findOne({ sessionId, isActive: true });
+
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conversation not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      conversation: {
+        sessionId: conversation.sessionId,
+        title: conversation.title,
+        messages: conversation.messages,
+        createdAt: conversation.createdAt,
+        updatedAt: conversation.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching conversation:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch conversation'
+    });
+  }
+});
+
+// Delete conversation
+app.delete('/api/conversations/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const conversation = await Conversation.findOneAndUpdate(
+      { sessionId },
+      { isActive: false },
+      { new: true }
+    );
+
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conversation not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Conversation deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting conversation:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete conversation'
+    });
+  }
+});
+
 // Chat endpoint
 app.post('/api/chat', async (req, res) => {
+  const startTime = Date.now();
+  let hasError = false;
+
   try {
-    const { message, conversationHistory = [] } = req.body;
+    const { message, conversationHistory = [], sessionId } = req.body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({
@@ -85,14 +190,33 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    // Generate session ID if not provided
+    const currentSessionId = sessionId || uuidv4();
+
     // Get the generative model (updated model name)
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-    // Build conversation context
+    // Get or create conversation in database
+    let conversation = await Conversation.findOne({ sessionId: currentSessionId, isActive: true });
+    
+    if (!conversation) {
+      conversation = new Conversation({
+        sessionId: currentSessionId,
+        title: 'New Conversation',
+        messages: []
+      });
+    }
+
+    // Add user message to conversation
+    await conversation.addMessage('user', message);
+
+    // Build conversation context from database
     let prompt = message;
-    if (conversationHistory.length > 0) {
-      const context = conversationHistory
-        .slice(-10) // Keep last 10 messages for context
+    const dbHistory = conversation.getHistory(10); // Get last 10 messages from DB
+    
+    if (dbHistory.length > 1) { // More than just the current message
+      const context = dbHistory
+        .slice(0, -1) // Exclude the current message we just added
         .map(msg => `${msg.role}: ${msg.content}`)
         .join('\n');
       prompt = `Previous conversation:\n${context}\n\nUser: ${message}`;
@@ -103,13 +227,28 @@ app.post('/api/chat', async (req, res) => {
     const response = await result.response;
     const text = response.text();
 
+    // Add AI response to conversation
+    await conversation.addMessage('assistant', text);
+
+    const responseTime = Date.now() - startTime;
+
+    // Update analytics
+    if (database.isConnected()) {
+      await Analytics.updateDailyStats(2, responseTime, hasError); // 2 messages: user + assistant
+    }
+
     res.json({
       success: true,
       response: text,
-      timestamp: new Date().toISOString()
+      sessionId: currentSessionId,
+      timestamp: new Date().toISOString(),
+      responseTime: responseTime
     });
 
   } catch (error) {
+    hasError = true;
+    const responseTime = Date.now() - startTime;
+    
     console.error('Error generating response:', error);
     console.error('Error details:', {
       message: error.message,
@@ -117,6 +256,11 @@ app.post('/api/chat', async (req, res) => {
       statusText: error.statusText,
       stack: error.stack
     });
+
+    // Update analytics with error
+    if (database.isConnected()) {
+      await Analytics.updateDailyStats(1, responseTime, hasError);
+    }
     
     // Handle specific API errors
     if (error.message.includes('API key') || error.message.includes('API_KEY')) {
@@ -166,10 +310,24 @@ app.use('*', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`🚀 AI Chatbot Backend running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`💬 Chat endpoint: http://localhost:${PORT}/api/chat`);
-});
+const startServer = async () => {
+  try {
+    // Connect to MongoDB
+    await database.connect();
+    
+    // Start Express server
+    app.listen(PORT, () => {
+      console.log(`🚀 AI Chatbot Backend running on port ${PORT}`);
+      console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+      console.log(`💬 Chat endpoint: http://localhost:${PORT}/api/chat`);
+      console.log(`📋 Conversations: http://localhost:${PORT}/api/conversations`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
 
 module.exports = app;
