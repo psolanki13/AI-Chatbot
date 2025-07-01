@@ -2,10 +2,14 @@ const mongoose = require('mongoose');
 
 // Conversation Schema
 const conversationSchema = new mongoose.Schema({
+  userId: {
+    type: String, // Clerk user ID
+    required: true,
+    index: true
+  },
   sessionId: {
     type: String,
     required: true,
-    unique: true,
     index: true
   },
   title: {
@@ -44,8 +48,9 @@ const conversationSchema = new mongoose.Schema({
 });
 
 // Indexes for better performance
-conversationSchema.index({ createdAt: -1 });
-conversationSchema.index({ updatedAt: -1 });
+conversationSchema.index({ userId: 1, createdAt: -1 });
+conversationSchema.index({ userId: 1, updatedAt: -1 });
+conversationSchema.index({ userId: 1, sessionId: 1 });
 
 // Update the updatedAt field before saving
 conversationSchema.pre('save', function(next) {

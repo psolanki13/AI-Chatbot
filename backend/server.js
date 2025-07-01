@@ -10,19 +10,29 @@ const { v4: uuidv4 } = require('uuid');
 const database = require('./config/database');
 const { Conversation, Analytics } = require('./models');
 
+// Clerk Authentication
+const { ClerkExpressRequireAuth } = require('@clerk/clerk-sdk-node');
+const { requireAuth, extractUser, optionalAuth } = require('./middleware/auth');
+
 // Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Validate API key
+// Validate required environment variables
 if (!process.env.GEMINI_API_KEY) {
   console.error('❌ GEMINI_API_KEY is not set in environment variables');
   process.exit(1);
 }
 
+if (!process.env.CLERK_SECRET_KEY) {
+  console.error('❌ CLERK_SECRET_KEY is not set in environment variables');
+  console.log('📝 Please set up Clerk authentication keys in your .env file');
+}
+
 console.log('✅ Gemini API key found');
+console.log('✅ Clerk configuration loaded');
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -97,10 +107,15 @@ app.get('/api/test-api', async (req, res) => {
   }
 });
 
-// Get all conversations
-app.get('/api/conversations', async (req, res) => {
+// Get all conversations for authenticated user
+app.get('/api/conversations', requireAuth, extractUser, async (req, res) => {
   try {
-    const conversations = await Conversation.find({ isActive: true })
+    const userId = req.userId;
+    
+    const conversations = await Conversation.find({ 
+      userId, 
+      isActive: true 
+    })
       .select('sessionId title createdAt updatedAt messages')
       .sort({ updatedAt: -1 })
       .limit(50);
@@ -128,11 +143,17 @@ app.get('/api/conversations', async (req, res) => {
   }
 });
 
-// Get specific conversation
-app.get('/api/conversations/:sessionId', async (req, res) => {
+// Get specific conversation for authenticated user
+app.get('/api/conversations/:sessionId', requireAuth, extractUser, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const conversation = await Conversation.findOne({ sessionId, isActive: true });
+    const userId = req.userId;
+    
+    const conversation = await Conversation.findOne({ 
+      userId, 
+      sessionId, 
+      isActive: true 
+    });
 
     if (!conversation) {
       return res.status(404).json({
@@ -190,13 +211,14 @@ app.delete('/api/conversations/:sessionId', async (req, res) => {
   }
 });
 
-// Chat endpoint
-app.post('/api/chat', async (req, res) => {
+// Chat endpoint with authentication
+app.post('/api/chat', requireAuth, extractUser, async (req, res) => {
   const startTime = Date.now();
   let hasError = false;
 
   try {
     const { message, conversationHistory = [], sessionId } = req.body;
+    const userId = req.userId; // From Clerk auth
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({
@@ -210,11 +232,16 @@ app.post('/api/chat', async (req, res) => {
     // Get the generative model (updated model name)
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-    // Get or create conversation in database
-    let conversation = await Conversation.findOne({ sessionId: currentSessionId, isActive: true });
+    // Get or create conversation in database for this user
+    let conversation = await Conversation.findOne({ 
+      userId, 
+      sessionId: currentSessionId, 
+      isActive: true 
+    });
     
     if (!conversation) {
       conversation = new Conversation({
+        userId,
         sessionId: currentSessionId,
         title: 'New Conversation',
         messages: []
