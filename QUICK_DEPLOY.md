@@ -85,20 +85,27 @@ CORS_ORIGIN=*
 - [ ] Set Framework: `Create React App`
 
 ### 🔧 **If Root Directory Not Working:**
-Try these options in order:
 
-**Option A**: Set Root Directory to `frontend`
-
-**Option B**: If Option A fails, use these settings:
-- [ ] Root Directory: Leave **BLANK** (empty)
-- [ ] Build Command: `cd frontend && npm run build`
-- [ ] Output Directory: `frontend/build`
-- [ ] Install Command: `cd frontend && npm install`
-
-**Option C**: Alternative build settings:
-- [ ] Root Directory: `./frontend`
+**SOLUTION A (Recommended)**: Use root directory with manual override
+- [ ] Root Directory: `frontend`
+- [ ] Framework: `Create React App`
 - [ ] Build Command: `npm run build` (default)
 - [ ] Output Directory: `build` (default)
+- [ ] Install Command: `npm install` (default)
+
+**SOLUTION B**: If Solution A fails, try this:
+- [ ] Root Directory: Leave **BLANK**
+- [ ] Framework: `Other`
+- [ ] Build Command: `npm run build --prefix frontend`
+- [ ] Output Directory: `frontend/build`
+- [ ] Install Command: `npm install --prefix frontend`
+
+**SOLUTION C**: Alternative with explicit paths:
+- [ ] Root Directory: Leave **BLANK**
+- [ ] Framework: `Other`
+- [ ] Build Command: `cd ./frontend && npm run build`
+- [ ] Output Directory: `frontend/build`
+- [ ] Install Command: `cd ./frontend && npm install`
 
 ### 3. Add Environment Variables
 **IMPORTANT**: Replace `YOUR_BACKEND_URL` with your actual Render URL from step above!

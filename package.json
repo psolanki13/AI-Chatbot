@@ -11,6 +11,8 @@
     "start-backend": "cd backend && npm run dev",
     "start-frontend": "cd frontend && npm start",
     "build": "cd frontend && npm run build",
+    "build:frontend": "npm run build --prefix frontend",
+    "install:frontend": "npm install --prefix frontend",
     "test": "cd frontend && npm test"
   },
   "devDependencies": {
