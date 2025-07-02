@@ -83,7 +83,22 @@ CORS_ORIGIN=*
 - [ ] Click "New Project"
 - [ ] Import: `psolanki13/AI-Chatbot`
 - [ ] Set Framework: `Create React App`
-- [ ] Set Root Directory: `frontend`
+
+### 🔧 **If Root Directory Not Working:**
+Try these options in order:
+
+**Option A**: Set Root Directory to `frontend`
+
+**Option B**: If Option A fails, use these settings:
+- [ ] Root Directory: Leave **BLANK** (empty)
+- [ ] Build Command: `cd frontend && npm run build`
+- [ ] Output Directory: `frontend/build`
+- [ ] Install Command: `cd frontend && npm install`
+
+**Option C**: Alternative build settings:
+- [ ] Root Directory: `./frontend`
+- [ ] Build Command: `npm run build` (default)
+- [ ] Output Directory: `build` (default)
 
 ### 3. Add Environment Variables
 **IMPORTANT**: Replace `YOUR_BACKEND_URL` with your actual Render URL from step above!
